@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: hospedium-api
+
+  mvc:
+    problemdetails:
+      enabled: true
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/hospedium_db}
+    username: ${DB_USERNAME:neisser}
+    password: ${DB_PASSWORD:12345678}
+
+  jpa:
+    hibernate:
+      ddl-auto: update
