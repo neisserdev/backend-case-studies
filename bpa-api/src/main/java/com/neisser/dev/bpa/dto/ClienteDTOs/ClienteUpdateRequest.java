@@ -2,10 +2,12 @@ package com.neisser.dev.bpa.dto.ClienteDTOs;
 
 import com.neisser.dev.bpa.model.ClasificacionEmpresa;
 
-public record ClienteUpdateRequest(
-        String nombre,
+import jakarta.validation.constraints.Pattern;
 
-        String documento,
+public record ClienteUpdateRequest(
+        @Pattern(regexp = ".*\\S.*", message = "El nombre del cliente no puede estar vacío.") String nombre,
+
+        @Pattern(regexp = ".*\\S.*", message = "El documento del cliente no puede estar vacío.") String documento,
 
         ClasificacionEmpresa clasificacionEmpresa) {
 }

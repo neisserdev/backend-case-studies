@@ -32,10 +32,10 @@ public class Cuenta {
     @Column(name = "cuenta_id")
     private Long id;
 
-    @Column(name = "saldo")
+    @Column(name = "saldo", nullable = false, precision = 19, scale = 2)
     private BigDecimal saldo;
 
-    @Column(name = "estado_cuenta")
+    @Column(name = "estado_cuenta", nullable = false)
     @Enumerated(EnumType.STRING)
     @Builder.Default
     private EstadoCuenta estadoCuenta = EstadoCuenta.ACTIVA;

@@ -11,10 +11,14 @@ public class ClasificacionEmpresaRequeridaValidator
 
     @Override
     public boolean isValid(ClienteRequest request, ConstraintValidatorContext context) {
-        if (request == null || request.tipoCliente() != TipoCliente.EMPRESA) {
+        if (request == null || request.tipoCliente() == null) {
             return true;
         }
 
-        return request.clasificacionEmpresa() != null;
+        if (request.tipoCliente() == TipoCliente.EMPRESA) {
+            return request.clasificacionEmpresa() != null;
+        }
+
+        return request.clasificacionEmpresa() == null;
     }
 }

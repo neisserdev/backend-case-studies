@@ -1,10 +1,13 @@
 package com.neisser.dev.bpa.service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -57,9 +60,18 @@ public class CuentaService {
                 .findById(request.clienteId())
                 .orElseThrow(() -> new ResourceNotFoundException("cliente", request.clienteId()));
 
-        Cuenta cuenta = cuentaMapper.toEntity(cliente, request.depositoInicial());
+        BigDecimal depositoInicial = normalizarMoneda(request.depositoInicial());
+        Cuenta cuenta = cuentaRepository.save(cuentaMapper.toEntity(cliente, depositoInicial));
 
-        return cuentaMapper.toResponse(cuentaRepository.save(cuenta));
+        Operacion operacionInicial = Operacion.builder()
+                .tipoOperacion(TipoOperacion.DEPOSITO)
+                .monto(depositoInicial)
+                .saldoResultante(depositoInicial)
+                .cuenta(cuenta)
+                .build();
+        operacionRepository.save(operacionInicial);
+
+        return cuentaMapper.toResponse(cuenta);
     }
 
     @Transactional(readOnly = true)
@@ -72,7 +84,7 @@ public class CuentaService {
 
     @Transactional
     public CuentaResponse cerrar(Long id) {
-        Cuenta cuenta = cuentaRepository.findById(id)
+        Cuenta cuenta = cuentaRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new ResourceNotFoundException("cuenta", id));
 
         if (cuenta.getEstadoCuenta() == EstadoCuenta.CERRADA) {
@@ -87,21 +99,25 @@ public class CuentaService {
     @Transactional
     public OperacionResponse depositar(Long cuentaId, OperacionRequest request) {
 
-        Cuenta cuenta = cuentaRepository.findById(cuentaId)
+        Cuenta cuenta = cuentaRepository.findByIdForUpdate(cuentaId)
                 .orElseThrow(() -> new ResourceNotFoundException("cuenta", cuentaId));
 
         if (cuenta.getEstadoCuenta() == EstadoCuenta.CERRADA) {
             throw new BusinessRuleViolationException("No se puede operar sobre una cuenta cerrada");
         }
 
-        BigDecimal nuevoSaldo = cuenta.getSaldo().add(request.monto());
+        BigDecimal monto = normalizarMoneda(request.monto());
+        BigDecimal nuevoSaldo = cuenta.getSaldo().add(monto);
         cuenta.setSaldo(nuevoSaldo);
 
         if (cuenta.getEstadoCuenta() == EstadoCuenta.BLOQUEADA) {
             cuenta.setEstadoCuenta(EstadoCuenta.ACTIVA);
         }
 
-        Operacion operacion = operacionMapper.toEntity(request, cuenta);
+        Operacion operacion = Operacion.builder()
+                .monto(monto)
+                .cuenta(cuenta)
+                .build();
         operacion.setTipoOperacion(TipoOperacion.DEPOSITO);
         operacion.setSaldoResultante(nuevoSaldo);
 
@@ -111,7 +127,7 @@ public class CuentaService {
     @Transactional
     public OperacionResponse extraer(Long cuentaId, OperacionRequest request) {
 
-        Cuenta cuenta = cuentaRepository.findById(cuentaId)
+        Cuenta cuenta = cuentaRepository.findByIdForUpdate(cuentaId)
                 .orElseThrow(() -> new ResourceNotFoundException("cuenta", cuentaId));
 
         if (cuenta.getEstadoCuenta() == EstadoCuenta.CERRADA) {
@@ -122,14 +138,18 @@ public class CuentaService {
             throw new BusinessRuleViolationException("Una cuenta bloqueada no admite extracciones");
         }
 
-        BigDecimal nuevoSaldo = cuenta.getSaldo().subtract(request.monto());
+        BigDecimal monto = normalizarMoneda(request.monto());
+        BigDecimal nuevoSaldo = cuenta.getSaldo().subtract(monto);
         cuenta.setSaldo(nuevoSaldo);
 
         if (nuevoSaldo.compareTo(BigDecimal.ZERO) < 0) {
             cuenta.setEstadoCuenta(EstadoCuenta.BLOQUEADA);
         }
 
-        Operacion operacion = operacionMapper.toEntity(request, cuenta);
+        Operacion operacion = Operacion.builder()
+                .monto(monto)
+                .cuenta(cuenta)
+                .build();
         operacion.setTipoOperacion(TipoOperacion.EXTRACCION);
         operacion.setSaldoResultante(nuevoSaldo);
 
@@ -153,7 +173,7 @@ public class CuentaService {
     @Transactional
     public OperacionResponse aplicarInteres(Long cuentaId) {
 
-        Cuenta cuenta = cuentaRepository.findById(cuentaId)
+        Cuenta cuenta = cuentaRepository.findByIdForUpdate(cuentaId)
                 .orElseThrow(() -> new ResourceNotFoundException("cuenta", cuentaId));
 
         if (cuenta.getEstadoCuenta() == EstadoCuenta.CERRADA) {
@@ -164,7 +184,7 @@ public class CuentaService {
                 .orElseThrow(() -> new ResourceNotFoundException("cliente", cuentaId));
 
         BigDecimal tasa = tasaDe(cliente);
-        BigDecimal interes = cuenta.getSaldo().multiply(tasa);
+        BigDecimal interes = cuenta.getSaldo().multiply(tasa).setScale(2, RoundingMode.HALF_UP);
         BigDecimal nuevoSaldo = cuenta.getSaldo().add(interes);
 
         cuenta.setSaldo(nuevoSaldo);
@@ -180,21 +200,25 @@ public class CuentaService {
     }
 
     @Transactional
+    @Scheduled(cron = "${bpa.interes-anual.cron:0 0 0 1 1 *}", zone = "UTC")
     public List<OperacionResponse> aplicarInteresAnual() {
 
-        LocalDate hoy = LocalDate.now();
+        LocalDate hoy = LocalDate.now(ZoneOffset.UTC);
         LocalDateTime inicioDelAnio = hoy.withDayOfYear(1).atStartOfDay();
         LocalDateTime inicioDelProximoAnio = hoy.plusYears(1).withDayOfYear(1).atStartOfDay();
 
-        List<Cuenta> cuentasActivas = cuentaRepository.findAll().stream()
-                .filter(c -> c.getEstadoCuenta() == EstadoCuenta.ACTIVA)
-                .filter(c -> !operacionRepository.existsByCuentaIdAndTipoOperacionAndFechaBetween(
+        List<Cuenta> cuentasActivas = cuentaRepository.findByEstadoCuentaForUpdate(EstadoCuenta.ACTIVA).stream()
+                .filter(c -> !operacionRepository.existsByCuentaIdAndTipoOperacionAndFechaGreaterThanEqualAndFechaLessThan(
                         c.getId(), TipoOperacion.INTERES, inicioDelAnio, inicioDelProximoAnio))
                 .toList();
 
         return cuentasActivas.stream()
                 .map(c -> aplicarInteres(c.getId()))
                 .toList();
+    }
+
+    private BigDecimal normalizarMoneda(BigDecimal monto) {
+        return monto.setScale(2, RoundingMode.UNNECESSARY);
     }
 
     private BigDecimal tasaDe(Cliente cliente) {

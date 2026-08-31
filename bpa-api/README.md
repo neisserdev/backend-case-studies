@@ -11,7 +11,7 @@ Este caso se centra principalmente en:
 - Modelado de relaciones entre entidades (`Cliente` ⇄ `Cuenta` ⇄ `Operacion`).
 - Reglas de negocio de dominio bancario: depósito mínimo, bloqueo por saldo negativo, reactivación por depósito, cierre de cuenta.
 - Inmutabilidad del historial: `Operacion` solo se crea y se consulta, nunca se edita ni se elimina.
-- Cálculo de interés anual diferenciado por tipo de cliente mediante `switch` de patrones.
+- Cálculo de interés anual diferenciado por tipo de cliente mediante una expresión `switch`.
 - Validación cruzada entre campos de un mismo DTO con una constraint de Jakarta Validation a medida (`@ClasificacionEmpresaRequerida`).
 - Consulta JPQL para resolver el cliente dueño de una cuenta.
 - Separación entre DTOs, mappers, servicios y repositorios.
@@ -41,6 +41,7 @@ La configuración de conexión se resuelve exclusivamente por variables de entor
 | `DB_URL` | URL JDBC de PostgreSQL |
 | `DB_USERNAME` | Usuario de la base de datos |
 | `DB_PASSWORD` | Contraseña del usuario |
+| `BPA_INTERES_ANUAL_CRON` | Cron opcional del interés anual; por defecto `0 0 0 1 1 *` |
 
 ### PostgreSQL Local
 
@@ -69,6 +70,8 @@ ALTER USER postgres WITH PASSWORD 'tu_password';
 export DB_URL=jdbc:postgresql://localhost:5432/bpa_db
 export DB_USERNAME=postgres
 export DB_PASSWORD=tu_password
+# Opcional: sobrescribir la ejecución del 1 de enero a las 00:00 UTC
+# export BPA_INTERES_ANUAL_CRON='0 0 0 1 1 *'
 ```
 
 Las tablas se crean automáticamente al iniciar la aplicación (`ddl-auto=update`).
@@ -89,7 +92,7 @@ La app estará disponible en `http://localhost:8080`
 
 - **Cliente**: `nombre`, `documento` (único) y `tipoCliente` (`PARTICULAR` o `EMPRESA`). Si es `EMPRESA`, requiere además `clasificacionEmpresa` (`RENTABLE` o `NO_RENTABLE`).
 - **Cuenta**: pertenece a un `Cliente`, mantiene un `saldo` y un `estadoCuenta` (`ACTIVA`, `BLOQUEADA` o `CERRADA`). Se crea con un depósito inicial mínimo de $50.
-- **Operacion**: registro inmutable de cada movimiento sobre una `Cuenta` (`DEPOSITO`, `EXTRACCION` o `INTERES`), con `monto`, `saldoResultante` y `fecha`. Forma parte del historial permanente y no se expone ninguna ruta de edición o borrado.
+- **Operacion**: registro inmutable de cada movimiento sobre una `Cuenta` (`DEPOSITO`, `EXTRACCION` o `INTERES`), con `monto`, `saldoResultante` y `fecha`. El depósito inicial se registra como la primera operación de la cuenta. El historial es permanente y no se expone ninguna ruta de edición o borrado.
 
 ### Reglas de negocio implementadas
 
@@ -103,7 +106,8 @@ La app estará disponible en `http://localhost:8080`
   - Particular → 2.5%
   - Empresa rentable → 3.5%
   - Empresa no rentable → 1.5%
-- La aplicación del interés se expone mediante `POST /cuentas/interes/anual`; este endpoint debe ser invocado una vez al año por un planificador externo o por el mecanismo de ejecución programada del entorno.
+- La aplicación ejecuta automáticamente el interés el 1 de enero a las 00:00 UTC mediante una tarea programada. El cron puede personalizarse con `BPA_INTERES_ANUAL_CRON`.
+- `POST /cuentas/interes/anual` permite disparar el mismo proceso manualmente; es seguro repetirlo porque las cuentas que ya recibieron interés durante el año actual se omiten.
 - Operaciones que combinan varias escrituras (crear cuenta, depositar, extraer, aplicar interés) están marcadas con `@Transactional`; las consultas de solo lectura usan `@Transactional(readOnly = true)`.
 
 ### Arquitectura por capas
@@ -142,9 +146,9 @@ Base URL: `http://localhost:8080/api/v1`
 }
 ```
 
-Validaciones: `nombre` y `documento` obligatorios · `documento` debe ser único · `tipoCliente` obligatorio · si `tipoCliente` es `EMPRESA`, `clasificacionEmpresa` es obligatoria.
+Validaciones: `nombre` y `documento` obligatorios y no vacíos · `documento` único · `tipoCliente` obligatorio · una `EMPRESA` requiere `clasificacionEmpresa` · un `PARTICULAR` no admite clasificación empresarial.
 
-**Body de actualización (`PATCH`, todos los campos opcionales):**
+**Body de actualización (`PATCH`, todos los campos opcionales):** los textos enviados no pueden estar vacíos, el documento continúa siendo único y la clasificación solo puede actualizarse en clientes de tipo `EMPRESA`.
 
 ```json
 {
@@ -162,7 +166,7 @@ Validaciones: `nombre` y `documento` obligatorios · `documento` debe ser único
 | `POST` | `/cuentas/{id}/depositos` | Registrar un depósito |
 | `POST` | `/cuentas/{id}/extracciones` | Registrar una extracción |
 | `GET` | `/cuentas/{id}/operaciones` | Historial de operaciones de la cuenta |
-| `POST` | `/cuentas/interes/anual` | Aplicar una vez por año el interés a las cuentas activas que aún no lo recibieron |
+| `POST` | `/cuentas/interes/anual` | Ejecutar manualmente el proceso anual para las cuentas activas que aún no recibieron interés ese año |
 
 **Body de creación de cuenta:**
 
@@ -172,6 +176,8 @@ Validaciones: `nombre` y `documento` obligatorios · `documento` debe ser único
   "depositoInicial": 100.00
 }
 ```
+
+El depósito inicial debe ser de al menos `$50`, admite como máximo dos decimales y se registra como la primera operación `DEPOSITO` del historial.
 
 **Body de depósito/extracción** (`POST /cuentas/{id}/depositos` o `/extracciones`):
 
@@ -197,7 +203,7 @@ La API implementa **RFC 9457 (Problem Details for HTTP APIs)** usando `ProblemDe
   "timestamp": "2026-06-01T14:30:45.123456Z",
   "code": "VALIDATION_ERROR",
   "errors": [
-    "Una empresa debe clasificarse como RENTABLE o NO_RENTABLE."
+    "La clasificación empresarial es obligatoria para EMPRESA y no se admite para PARTICULAR."
   ],
   "count": 1
 }
@@ -293,9 +299,20 @@ curl -X POST http://localhost:8080/api/v1/cuentas/interes/anual
 ## 📝 Notas Técnicas
 
 - **Tablas**: se crean automáticamente con `hibernate.ddl-auto=update`.
-- **Serialización**: `BigDecimal` para saldos y montos (comparados siempre con `compareTo`, nunca con `equals`), `LocalDateTime` para la fecha de cada operación.
+- **Dinero**: `BigDecimal` con dos decimales para saldos y montos; el interés se redondea a centavos con `RoundingMode.HALF_UP`.
+- **Tiempo**: `LocalDateTime` en UTC para la fecha de cada operación y para determinar el año del interés.
 - **Validación**: DTOs (`record`) con anotaciones de Jakarta Validation, incluida una constraint a nivel de clase (`@ClasificacionEmpresaRequerida`) para reglas que dependen de más de un campo.
-- **Configuración por entorno**: la conexión a base de datos se resuelve únicamente con `${DB_URL}`, `${DB_USERNAME}` y `${DB_PASSWORD}`, sin valores por defecto — no hay secretos ni datos de conexión en el código fuente.
+- **Configuración por entorno**: la conexión a base de datos se resuelve únicamente con `${DB_URL}`, `${DB_USERNAME}` y `${DB_PASSWORD}`, sin valores por defecto; no hay secretos ni datos de conexión en el código fuente.
+- **Concurrencia**: depósitos, extracciones, cierres e interés anual bloquean pesimistamente las cuentas involucradas para no perder actualizaciones simultáneas.
+- **Interés programado**: el cron predeterminado es `0 0 0 1 1 *` (1 de enero, 00:00 UTC) y puede cambiarse mediante `BPA_INTERES_ANUAL_CRON`.
+
+## ✅ Pruebas automatizadas
+
+La suite incluye pruebas de contexto, servicios y validaciones para el depósito inicial, actualización parcial, unicidad documental, clasificación de clientes, reactivación de cuentas, precisión monetaria e idempotencia anual.
+
+```bash
+./mvnw test
+```
 
 ## 👨‍💻 Autor
 

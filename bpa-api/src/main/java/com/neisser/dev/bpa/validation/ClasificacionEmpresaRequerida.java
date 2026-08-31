@@ -15,7 +15,7 @@ import jakarta.validation.Payload;
 @Retention(RetentionPolicy.RUNTIME)
 public @interface ClasificacionEmpresaRequerida {
 
-    String message() default "Una empresa debe clasificarse como RENTABLE o NO_RENTABLE.";
+    String message() default "La clasificación empresarial es obligatoria para EMPRESA y no se admite para PARTICULAR.";
 
     Class<?>[] groups() default {};
 

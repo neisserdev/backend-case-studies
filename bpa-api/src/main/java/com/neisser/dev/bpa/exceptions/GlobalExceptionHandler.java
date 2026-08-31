@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
@@ -48,6 +49,15 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                 "Uno o más parámetros no cumplen las restricciones",
                 request.getRequestURI(),
                 Map.of("errors", errores, "count", errores.size()));
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ProblemDetail handleDataIntegrity(DataIntegrityViolationException ex, HttpServletRequest request) {
+        log.warn("Data integrity conflict on {}: {}", request.getRequestURI(), ex.getMostSpecificCause().getMessage());
+        return ProblemDetails.of(
+                ErrorCode.RESOURCE_CONFLICT,
+                "La operación entra en conflicto con datos existentes",
+                request.getRequestURI());
     }
 
     @ExceptionHandler(Exception.class)

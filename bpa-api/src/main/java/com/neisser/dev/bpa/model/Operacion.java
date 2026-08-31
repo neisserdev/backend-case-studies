@@ -2,6 +2,7 @@ package com.neisser.dev.bpa.model;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -33,21 +34,21 @@ public class Operacion {
     @Column(name = "operacion_id")
     private Long id;
 
-    @Column(name = "tipo_operacion")
+    @Column(name = "tipo_operacion", nullable = false, updatable = false)
     @Enumerated(EnumType.STRING)
     private TipoOperacion tipoOperacion;
 
-    @Column(name = "monto")
+    @Column(name = "monto", nullable = false, precision = 19, scale = 2, updatable = false)
     private BigDecimal monto;
 
-    @Column(name = "saldo_resultante")
+    @Column(name = "saldo_resultante", nullable = false, precision = 19, scale = 2, updatable = false)
     private BigDecimal saldoResultante;
 
-    @Column(name = "fecha")
+    @Column(name = "fecha", nullable = false, updatable = false)
     @Builder.Default
-    private LocalDateTime fecha = LocalDateTime.now();
+    private LocalDateTime fecha = LocalDateTime.now(ZoneOffset.UTC);
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "cuenta_id", nullable = false)
+    @JoinColumn(name = "cuenta_id", nullable = false, updatable = false)
     private Cuenta cuenta;
 }

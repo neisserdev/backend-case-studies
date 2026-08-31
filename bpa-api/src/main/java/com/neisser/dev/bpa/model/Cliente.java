@@ -27,13 +27,13 @@ public class Cliente {
     @Column(name = "cliente_id")
     private Long id;
 
-    @Column(name = "nombre")
+    @Column(name = "nombre", nullable = false)
     private String nombre;
 
-    @Column(name = "documento")
+    @Column(name = "documento", nullable = false, unique = true)
     private String documento;
 
-    @Column(name = "tipo_cliente")
+    @Column(name = "tipo_cliente", nullable = false)
     @Enumerated(EnumType.STRING)
     private TipoCliente tipoCliente;
 
