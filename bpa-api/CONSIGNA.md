@@ -24,8 +24,6 @@ Una vez al año se aplica automáticamente el interés correspondiente a las cue
 
 ## CRUD
 
-Aquí no daría CRUD completo a Operación, porque eso violaría la regla de inmutabilidad.
-
 | Recurso | Operaciones |
 |---|---|
 | Cliente | Crear, consultar, actualizar |
